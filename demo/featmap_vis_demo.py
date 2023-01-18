@@ -4,11 +4,11 @@ import os
 from typing import Sequence
 
 import mmcv
-from mmdet.apis import inference_detector, init_detector
+from mmdet.apis import inference_detector, init_detector # 自己的模型没有统一的接口，使用自己的detector就可以了
 from mmengine import Config, DictAction
 from mmengine.utils import ProgressBar
 
-from mmyolo.registry import VISUALIZERS
+from mmyolo.registry import VISUALIZERS # 这部分其实是调用mmengine的VISUALIZERS来进行可视化
 from mmyolo.utils import register_all_modules
 from mmyolo.utils.misc import auto_arrange_images, get_file_list
 
@@ -76,14 +76,14 @@ class ActivationsWrapper:
         self.activations = []
         self.handles = []
         self.image = None
-        for target_layer in target_layers:
+        for target_layer in target_layers: # 为模型中的每个target_layer都注册好hook
             self.handles.append(
                 target_layer.register_forward_hook(self.save_activation))
 
-    def save_activation(self, module, input, output):
+    def save_activation(self, module, input, output): # hook实际调用的函数，就是保留这个layer所对应的output
         self.activations.append(output)
 
-    def __call__(self, img_path):
+    def __call__(self, img_path): # 该函数主动的调用了模型的前向传播部分，hook必须在forward前进行注册
         self.activations = []
         results = inference_detector(self.model, img_path)
         return results, self.activations
@@ -108,17 +108,21 @@ def main():
         channel_reduction = None
     assert len(args.arrangement) == 2
 
+    # 初始化检测器
     model = init_detector(args.config, args.checkpoint, device=args.device)
 
     if not os.path.exists(args.out_dir) and not args.show:
         os.mkdir(args.out_dir)
 
+    # 打印模型，方便知道你要调用的是哪里的layer
     if args.preview_model:
         print(model)
         print('\n This flag is only show model, if you want to continue, '
               'please remove `--preview-model` to get the feature map.')
         return
 
+    # 这个操作还是挺关键的，这样之后才能为target_layer注册hook
+    # 如果直接调用的是传入的那个target_layer字符串是没办法注册hook的
     target_layers = []
     for target_layer in args.target_layers:
         try:
@@ -127,6 +131,7 @@ def main():
             print(model)
             raise RuntimeError('layer does not exist', e)
 
+    # 初始化activationWrapper, 为每个target_layer去注册forward_hook
     activations_wrapper = ActivationsWrapper(model, target_layers)
 
     # init visualizer
@@ -138,10 +143,13 @@ def main():
 
     progress_bar = ProgressBar(len(image_list))
     for image_path in image_list:
+        # 调用的_call_，其实就是进行模型的前向传播，在前向传播的过程中
+        # 各个hook都获取了自己需要的值
         result, featmaps = activations_wrapper(image_path)
         if not isinstance(featmaps, Sequence):
             featmaps = [featmaps]
 
+        # 对featuremap进行些简单的处理，方便进行后面的可视化
         flatten_featmaps = []
         for featmap in featmaps:
             if isinstance(featmap, Sequence):
@@ -171,6 +179,7 @@ def main():
             pred_score_thr=args.score_thr)
         drawn_img = visualizer.get_image()
 
+        # 调用visualizer进行特征图可视化
         for featmap in flatten_featmaps:
             shown_img = visualizer.draw_featmap(
                 featmap[0],
