@@ -289,11 +289,11 @@ class YOLOv6Head(YOLOv5Head):
                 mlvl_priors_with_stride, dim=0)
             self.stride_tensor = self.flatten_priors_train[..., [2]]
 
-        # gt info
+        # gt info pad_bb-x_flag,其中1表示这是一个真正的gtbox，0表示是填充的
         gt_info = self.gt_instances_preprocess(batch_gt_instances, num_imgs)
         gt_labels = gt_info[:, :, :1]
         gt_bboxes = gt_info[:, :, 1:]  # xyxy
-        pad_bbox_flag = (gt_bboxes.sum(-1, keepdim=True) > 0).float()
+        pad_bbox_flag = (gt_bboxes.sum(-1, keepdim=True) > 0).float() #因为填充的bboxes的坐标是0
 
         # pred info
         flatten_cls_preds = [
@@ -314,12 +314,12 @@ class YOLOv6Head(YOLOv5Head):
             self.stride_tensor[:, 0])
         pred_scores = torch.sigmoid(flatten_cls_preds)
 
-        if current_epoch < self.initial_epoch:
+        if current_epoch < self.initial_epoch: # init_epoch是4, 前4个epoch用的是BatchATSSAssigner
             assigned_result = self.initial_assigner(
                 flatten_pred_bboxes.detach(), self.flatten_priors_train,
                 self.num_level_priors, gt_labels, gt_bboxes, pad_bbox_flag)
         else:
-            assigned_result = self.assigner(flatten_pred_bboxes.detach(),
+            assigned_result = self.assigner(flatten_pred_bboxes.detach(), # 后续的epoch使用BatchTaskAlignedAssigner
                                             pred_scores.detach(),
                                             self.flatten_priors_train,
                                             gt_labels, gt_bboxes,
@@ -329,7 +329,7 @@ class YOLOv6Head(YOLOv5Head):
         assigned_scores = assigned_result['assigned_scores']
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
-        # cls loss
+        # cls loss 计算分类loss，因为到这里已经确定了正负样本
         with torch.cuda.amp.autocast(enabled=False):
             loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores)
 
@@ -344,7 +344,7 @@ class YOLOv6Head(YOLOv5Head):
 
         # select positive samples mask
         num_pos = fg_mask_pre_prior.sum()
-        if num_pos > 0:
+        if num_pos > 0: # 就是为了确保每个正样本只对应一个gt吧
             # when num_pos > 0, assigned_scores_sum will >0, so the loss_bbox
             # will not report an error
             # iou loss
@@ -371,7 +371,7 @@ class YOLOv6Head(YOLOv5Head):
     def gt_instances_preprocess(batch_gt_instances: Union[Tensor, Sequence],
                                 batch_size: int) -> Tensor:
         """Split batch_gt_instances with batch size, from [all_gt_bboxes, 6]
-        to.
+        to. [batch中的哪张图片，类别，bbox坐标]
 
         [batch_size, number_gt, 5]. If some shape of single batch smaller than
         gt bbox len, then using [-1., 0., 0., 0., 0.] to fill.
@@ -414,15 +414,15 @@ class YOLOv6Head(YOLOv5Head):
             max_gt_bbox_len = 0
             for i in range(batch_size):
                 single_batch_instance = \
-                    batch_gt_instances[batch_gt_instances[:, 0] == i, :]
+                    batch_gt_instances[batch_gt_instances[:, 0] == i, :] # ==0的就表示是属于batch中的第一张图片的
                 single_batch_instance = single_batch_instance[:, 1:]
-                batch_instance_list.append(single_batch_instance)
-                if len(single_batch_instance) > max_gt_bbox_len:
+                batch_instance_list.append(single_batch_instance) # 去除了表示batch的第一个序号
+                if len(single_batch_instance) > max_gt_bbox_len: # max_gt_bbox_len 更新为batch中gt最大的一张图片对应的bbox数目
                     max_gt_bbox_len = len(single_batch_instance)
 
             # fill [-1., 0., 0., 0., 0.] if some shape of
             # single batch not equal max_gt_bbox_len
-            for index, gt_instance in enumerate(batch_instance_list):
+            for index, gt_instance in enumerate(batch_instance_list): # 进行填充，确保batch中没张图片bbox的数量都相同
                 if gt_instance.shape[0] >= max_gt_bbox_len:
                     continue
                 fill_tensor = batch_gt_instances.new_full(

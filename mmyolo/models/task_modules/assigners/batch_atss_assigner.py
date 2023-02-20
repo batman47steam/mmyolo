@@ -80,12 +80,12 @@ class BatchATSSAssigner(nn.Module):
 
         1. compute iou between all prior (prior of all pyramid levels) and gt
         2. compute center distance between all prior and gt
-        3. on each pyramid level, for each gt, select k prior whose center
+        3. on each pyramid level, for each gt, select k prior whose center 总共确定是这么多的anchor当作备选
            are closest to the gt center, so we total select k*l prior as
            candidates for each gt
-        4. get corresponding iou for the these candidates, and compute the
+        4. get corresponding iou for the these candidates, and compute the 计算所有备选的anchor的mean和std，然后作为一个阈值
            mean and std, set mean + std as the iou threshold
-        5. select these candidates whose iou are greater than or equal to
+        5. select these candidates whose iou are greater than or equal to 大于阈值的作为正样本
            the threshold as positive
         6. limit the positive sample's center in gt
 
@@ -109,10 +109,10 @@ class BatchATSSAssigner(nn.Module):
                     shape(batch_size, num_gt, number_classes)
                 'fg_mask_pre_prior' (Tensor): shape(bs, num_gt)
         """
-        # generate priors
-        cell_half_size = priors[:, 2:] * 2.5
+        # generate priors 相当于是将featuremap上生成的anchor给映射回原图，2.5是超参数，目的是为了扩大范围
+        cell_half_size = priors[:, 2:] * 2.5  # 2.5 是一个超参，目的是为了扩大下anchor box的范围
         priors_gen = torch.zeros_like(priors)
-        priors_gen[:, :2] = priors[:, :2] - cell_half_size
+        priors_gen[:, :2] = priors[:, :2] - cell_half_size # 变成左上角和右下角坐标的形式
         priors_gen[:, 2:] = priors[:, :2] + cell_half_size
         priors = priors_gen
 
@@ -142,7 +142,7 @@ class BatchATSSAssigner(nn.Module):
             gt_bboxes.reshape([-1, 4]), priors)
         distances = distances.reshape([batch_size, -1, num_priors])
 
-        # Selecting candidates based on the center distance
+        # Selecting candidates based on the center distance is_in_candidate->(batch, num_gt, num_priors) candidate_idexs->(batch, num_gt, topk*num_lvl)
         is_in_candidate, candidate_idxs = self.select_topk_candidates(
             distances, num_level_priors, pad_bbox_flag)
 
@@ -157,7 +157,7 @@ class BatchATSSAssigner(nn.Module):
             iou_candidates > overlaps_thr_per_gt.repeat([1, 1, num_priors]),
             is_in_candidate, torch.zeros_like(is_in_candidate))
 
-        is_in_gts = select_candidates_in_gts(priors_points, gt_bboxes)
+        is_in_gts = select_candidates_in_gts(priors_points, gt_bboxes) # 还要再排查一遍pos的是否在gtbox内部
         pos_mask = is_pos * is_in_gts * pad_bbox_flag
 
         # if an anchor box is assigned to multiple gts,
@@ -218,9 +218,9 @@ class BatchATSSAssigner(nn.Module):
 
             _, topk_idxs_per_level = distances_per_level.topk(
                 selected_k, dim=-1, largest=False)
-            candidate_idxs.append(topk_idxs_per_level + start_idx)
+            candidate_idxs.append(topk_idxs_per_level + start_idx) # 每个gtbox都会有topK个candidate (batch, num_gt, topK)
 
-            topk_idxs_per_level = torch.where(
+            topk_idxs_per_level = torch.where( # 只有满足真正有object的位置，才会记录topK
                 pad_bbox_flag, topk_idxs_per_level,
                 torch.zeros_like(topk_idxs_per_level))
 

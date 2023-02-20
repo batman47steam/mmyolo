@@ -61,7 +61,7 @@ def select_highest_overlaps(pos_mask: Tensor, overlaps: Tensor,
     fg_mask_pre_prior = pos_mask.sum(axis=-2)
 
     # Make sure the positive sample matches the only one and is the largest IoU
-    if fg_mask_pre_prior.max() > 1:
+    if fg_mask_pre_prior.max() > 1: # 这是说明有的地方匹配了两个ground-truth吗
         mask_multi_gts = (fg_mask_pre_prior.unsqueeze(1) > 1).repeat(
             [1, num_gt, 1])
         index = overlaps.argmax(axis=1)
