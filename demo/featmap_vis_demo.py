@@ -6,10 +6,10 @@ from typing import Sequence
 import mmcv
 from mmdet.apis import inference_detector, init_detector # 自己的模型没有统一的接口，使用自己的detector就可以了
 from mmengine import Config, DictAction
+from mmengine.registry import init_default_scope
 from mmengine.utils import ProgressBar
 
-from mmyolo.registry import VISUALIZERS # 这部分其实是调用mmengine的VISUALIZERS来进行可视化
-from mmyolo.utils import register_all_modules
+from mmyolo.registry import VISUALIZERS
 from mmyolo.utils.misc import auto_arrange_images, get_file_list
 
 
@@ -96,12 +96,11 @@ class ActivationsWrapper:
 def main():
     args = parse_args()
 
-    # register all modules in mmdet into the registries
-    register_all_modules()
-
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+
+    init_default_scope(cfg.get('default_scope', 'mmyolo'))
 
     channel_reduction = args.channel_reduction
     if channel_reduction == 'None':
