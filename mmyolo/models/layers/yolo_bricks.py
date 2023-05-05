@@ -582,7 +582,7 @@ class PPYOLOESELayer(nn.Module):
                      type='BN', momentum=0.1, eps=1e-5),
                  act_cfg: ConfigType = dict(type='SiLU', inplace=True)):
         super().__init__()
-        self.fc = nn.Conv2d(feat_channels, feat_channels, 1)
+        self.fc = nn.Conv2d(feat_channels, feat_channels, 1) # 相当于是全连接层
         self.sig = nn.Sigmoid()
         self.conv = ConvModule(
             feat_channels,
@@ -593,7 +593,7 @@ class PPYOLOESELayer(nn.Module):
 
         self._init_weights()
 
-    def _init_weights(self):
+    def _init_weights(self): # 初始化是针对self.fc的
         """Init weights."""
         nn.init.normal_(self.fc.weight, mean=0, std=0.001)
 
@@ -603,8 +603,8 @@ class PPYOLOESELayer(nn.Module):
              feat (Tensor): The input tensor.
              avg_feat (Tensor): Average pooling feature tensor.
          """
-        weight = self.sig(self.fc(avg_feat))
-        return self.conv(feat * weight)
+        weight = self.sig(self.fc(avg_feat)) # 全局平均池化没什么可学习的特征,主要就是靠这个fc来针对特定的任务进行学习，得到每个通道对应的权重
+        return self.conv(feat * weight) # 相当于是通道注意力以后再次进行卷积
 
 
 @MODELS.register_module()

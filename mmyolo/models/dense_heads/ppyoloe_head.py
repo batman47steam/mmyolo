@@ -34,7 +34,7 @@ class PPYOLOEHeadModule(BaseModule):
             on the feature grid.
         featmap_strides (Sequence[int]): Downsample factor of each feature map.
              Defaults to (8, 16, 32).
-        reg_max (int): Max value of integral set :math: ``{0, ..., reg_max}``
+        reg_max (int): Max value of integral set :math: ``{0, ..., reg_max}`` # reg_max这里明显是和QFL相关的
             in QFL setting. Defaults to 16.
         norm_cfg (dict): Config dict for normalization layer.
             Defaults to dict(type='BN', momentum=0.03, eps=0.001).
@@ -102,11 +102,11 @@ class PPYOLOEHeadModule(BaseModule):
         for in_channel in self.in_channels:
             self.cls_preds.append(
                 nn.Conv2d(in_channel, self.num_classes, 3, padding=1))
-            self.reg_preds.append(
+            self.reg_preds.append( # reg_preds本身预测出来的就是一个分布，ltrb，每个位置处对应一个代表着分布的向量
                 nn.Conv2d(in_channel, 4 * (self.reg_max + 1), 3, padding=1))
 
         # init proj
-        proj = torch.arange(self.reg_max + 1, dtype=torch.float)
+        proj = torch.arange(self.reg_max + 1, dtype=torch.float) # proj [0,1,2,3,...,16]
         self.register_buffer('proj', proj, persistent=False)
 
     def forward(self, x: Tuple[Tensor]) -> Tensor:
@@ -129,19 +129,19 @@ class PPYOLOEHeadModule(BaseModule):
                        reg_pred: nn.ModuleList) -> Tensor:
         """Forward feature of a single scale level."""
         b, _, h, w = x.shape
-        avg_feat = F.adaptive_avg_pool2d(x, (1, 1))
-        cls_logit = cls_pred(cls_stem(x, avg_feat) + x)
-        bbox_dist_preds = reg_pred(reg_stem(x, avg_feat))
-        if self.reg_max > 1:
-            bbox_dist_preds = bbox_dist_preds.reshape(
+        avg_feat = F.adaptive_avg_pool2d(x, (1, 1)) # 全局平均池化以后w和h都变成1了
+        cls_logit = cls_pred(cls_stem(x, avg_feat) + x) # 分类的还会再加上x
+        bbox_dist_preds = reg_pred(reg_stem(x, avg_feat)) # cls_pred和reg_pred都是conv2d
+        if self.reg_max > 1: # reg_max = 16
+            bbox_dist_preds = bbox_dist_preds.reshape( # 调整成（4，self.reg_max+1)，就是ltrb每个位置处对应一个代表分布的向量
                 [-1, 4, self.reg_max + 1, h * w]).permute(0, 3, 1, 2)
-            bbox_preds = bbox_dist_preds.softmax(3).matmul(
-                self.proj.view([-1, 1])).squeeze(-1)
-            bbox_preds = bbox_preds.transpose(1, 2).reshape(b, -1, h, w)
+            bbox_preds = bbox_dist_preds.softmax(3).matmul( # 积分，或者说在求数学期望，softmax就是在分布的维度上去得到每个位置处对应的概率
+                self.proj.view([-1, 1])).squeeze(-1) # 但是proj是固定[0-regmax]的，按道理来说不应该和具体的target y相关吗
+            bbox_preds = bbox_preds.transpose(1, 2).reshape(b, -1, h, w) # 积分完成，所以又变成ltrb的形式了，但是这样的结果肯定是只能在regmax的范围内
         else:
             bbox_preds = bbox_dist_preds
         if self.training:
-            return cls_logit, bbox_preds, bbox_dist_preds
+            return cls_logit, bbox_preds, bbox_dist_preds # 既返回了bbox_preds也返回了bbox_dist_preds
         else:
             return cls_logit, bbox_preds
 
@@ -230,7 +230,7 @@ class PPYOLOEHead(YOLOv6Head):
             bbox_preds (Sequence[Tensor]): Box energies / deltas for each scale
                 level, each is a 4D-tensor, the channel number is
                 num_priors * 4.
-            bbox_dist_preds (Sequence[Tensor]): Box distribution logits for
+            bbox_dist_preds (Sequence[Tensor]): Box distribution logits for # box分布的logits
                 each scale level with shape (bs, reg_max + 1, H*W, 4).
             batch_gt_instances (list[:obj:`InstanceData`]): Batch of
                 gt_instance. It usually includes ``bboxes`` and ``labels``
@@ -258,13 +258,13 @@ class PPYOLOEHead(YOLOv6Head):
         if current_featmap_sizes != self.featmap_sizes_train:
             self.featmap_sizes_train = current_featmap_sizes
 
-            mlvl_priors_with_stride = self.prior_generator.grid_priors(
+            mlvl_priors_with_stride = self.prior_generator.grid_priors( # (x, y, stride_w, stride_h) 最后两个表示的是stride
                 self.featmap_sizes_train,
                 dtype=cls_scores[0].dtype,
                 device=cls_scores[0].device,
                 with_stride=True)
 
-            self.num_level_priors = [len(n) for n in mlvl_priors_with_stride]
+            self.num_level_priors = [len(n) for n in mlvl_priors_with_stride] # 知道每一层对应的index
             self.flatten_priors_train = torch.cat(
                 mlvl_priors_with_stride, dim=0)
             self.stride_tensor = self.flatten_priors_train[..., [2]]
@@ -295,12 +295,12 @@ class PPYOLOEHead(YOLOv6Head):
         flatten_dist_preds = torch.cat(flatten_pred_dists, dim=1)
         flatten_cls_preds = torch.cat(flatten_cls_preds, dim=1)
         flatten_pred_bboxes = torch.cat(flatten_pred_bboxes, dim=1)
-        flatten_pred_bboxes = self.bbox_coder.decode(
+        flatten_pred_bboxes = self.bbox_coder.decode( # 把预测的ltrb，转换成了bbox的坐标xyxy，这个内部是乘了stride的，所以应该是原图的坐标
             self.flatten_priors_train[..., :2], flatten_pred_bboxes,
             self.stride_tensor[..., 0])
         pred_scores = torch.sigmoid(flatten_cls_preds)
 
-        if current_epoch < self.initial_epoch:
+        if current_epoch < self.initial_epoch: # 初始的几个epoch先求atss，后续比较稳定以后用tood的分配策略
             assigned_result = self.initial_assigner(
                 flatten_pred_bboxes.detach(), self.flatten_priors_train,
                 self.num_level_priors, gt_labels, gt_bboxes, pad_bbox_flag)
@@ -311,7 +311,7 @@ class PPYOLOEHead(YOLOv6Head):
                                             gt_labels, gt_bboxes,
                                             pad_bbox_flag)
 
-        assigned_bboxes = assigned_result['assigned_bboxes']
+        assigned_bboxes = assigned_result['assigned_bboxes'] # 分配正负样本，确定回归目标
         assigned_scores = assigned_result['assigned_scores']
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
@@ -321,7 +321,7 @@ class PPYOLOEHead(YOLOv6Head):
 
         # rescale bbox
         assigned_bboxes /= self.stride_tensor
-        flatten_pred_bboxes /= self.stride_tensor
+        flatten_pred_bboxes /= self.stride_tensor # 之前在bbox.coder那里乘了stride，现在又还原回去了
 
         assigned_scores_sum = assigned_scores.sum()
         # reduce_mean between all gpus
@@ -336,12 +336,12 @@ class PPYOLOEHead(YOLOv6Head):
             # will not report an error
             # iou loss
             prior_bbox_mask = fg_mask_pre_prior.unsqueeze(-1).repeat([1, 1, 4])
-            pred_bboxes_pos = torch.masked_select(
+            pred_bboxes_pos = torch.masked_select( # 利用mask选出对应正样本处ltrb的预测
                 flatten_pred_bboxes, prior_bbox_mask).reshape([-1, 4])
-            assigned_bboxes_pos = torch.masked_select(
+            assigned_bboxes_pos = torch.masked_select( # 利用mask选出对应bbox的gt
                 assigned_bboxes, prior_bbox_mask).reshape([-1, 4])
-            bbox_weight = torch.masked_select(
-                assigned_scores.sum(-1), fg_mask_pre_prior).unsqueeze(-1)
+            bbox_weight = torch.masked_select( # bbox_weight也是从预测的attention scores里面取出来的
+                assigned_scores.sum(-1), fg_mask_pre_prior).unsqueeze(-1) # assigned_scores.sum(-1)在类别的维度上求和了吗
             loss_bbox = self.loss_bbox(
                 pred_bboxes_pos,
                 assigned_bboxes_pos,
@@ -352,19 +352,19 @@ class PPYOLOEHead(YOLOv6Head):
             dist_mask = fg_mask_pre_prior.unsqueeze(-1).repeat(
                 [1, 1, (self.head_module.reg_max + 1) * 4])
 
-            pred_dist_pos = torch.masked_select(
+            pred_dist_pos = torch.masked_select( # 在正样本的位置处预测出来的ltrb对应的分布
                 flatten_dist_preds,
                 dist_mask).reshape([-1, 4, self.head_module.reg_max + 1])
             assigned_ltrb = self.bbox_coder.encode(
                 self.flatten_priors_train[..., :2] / self.stride_tensor,
                 assigned_bboxes,
-                max_dis=self.head_module.reg_max,
+                max_dis=self.head_module.reg_max, # 注意下max_dis的作用，会限制转换的ltrb都不会超过16
                 eps=0.01)
-            assigned_ltrb_pos = torch.masked_select(
+            assigned_ltrb_pos = torch.masked_select( # 选出正样本对应位置处的ltrb的值
                 assigned_ltrb, prior_bbox_mask).reshape([-1, 4])
             loss_dfl = self.loss_dfl(
-                pred_dist_pos.reshape(-1, self.head_module.reg_max + 1),
-                assigned_ltrb_pos.reshape(-1),
+                pred_dist_pos.reshape(-1, self.head_module.reg_max + 1), # pred_dist_pos是ltrb每个确切的值所对应的分布
+                assigned_ltrb_pos.reshape(-1), # assigned_ltrb_pos是ltrb对应的确切值
                 weight=bbox_weight.expand(-1, 4).reshape(-1),
                 avg_factor=assigned_scores_sum)
         else:

@@ -48,9 +48,9 @@ class DistancePointBBoxCoder(MMDET_DistancePointBBoxCoder):
         if self.clip_border is False:
             max_shape = None
 
-        pred_bboxes = pred_bboxes * stride[None, :, None]
+        pred_bboxes = pred_bboxes * stride[None, :, None] # pred_bboxes乘上了将采用的倍率还原回原图的尺寸
 
-        return distance2bbox(points, pred_bboxes, max_shape)
+        return distance2bbox(points, pred_bboxes, max_shape) # 通过ltrb反算xyxy
 
     def encode(self,
                points: torch.Tensor,
